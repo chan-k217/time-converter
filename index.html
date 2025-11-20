@@ -12,7 +12,6 @@
         padding: 14px;
         box-sizing: border-box;
       }
-
       .card {
         background: #fff;
         padding: 20px;
@@ -23,14 +22,12 @@
         box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
         box-sizing: border-box;
       }
-
       label {
         font-size: 13px;
         font-weight: 500;
         display: block;
         margin-bottom: 4px;
       }
-
       input,
       select {
         width: 100%;
@@ -40,11 +37,9 @@
         font-size: 14px;
         box-sizing: border-box;
       }
-
       .field {
         margin-bottom: 14px;
       }
-
       .result {
         margin-top: 16px;
         background: #fbfdff;
@@ -52,10 +47,9 @@
         padding: 14px;
         border-radius: 8px;
         font-size: 14px;
-        word-break: break-word;
         box-sizing: border-box;
+        word-break: break-word;
       }
-
       .muted {
         font-size: 12px;
         color: #666;
@@ -65,15 +59,15 @@
 
   <body>
     <div class="card">
-      <h2 style="font-size: 16px; margin: 0 0 12px">Time Converter</h2>
+      <h2 style="font-size: 16px; margin: 0 0 12px">Simple Time Converter</h2>
 
       <div class="field">
-        <label>Date</label>
+        <label>Date (UTC)</label>
         <input type="date" id="dateInput" />
       </div>
 
       <div class="field">
-        <label>Time</label>
+        <label>Time (UTC)</label>
         <input type="time" id="timeInput" />
       </div>
 
@@ -92,132 +86,30 @@
         <div class="muted">Converted results will appear here.</div>
       </div>
     </div>
-    <script>
-      /*
-  Robust approach:
-  - Given date components (Y,M,D,h,m) and an IANA timezone (tz),
-    we need the epoch (ms since 1970-01-01 UTC) that corresponds
-    to that wall-clock time in that timezone.
-  - We perform a small binary search (within ±36 hours) to find an epoch
-    whose Intl-formatted parts (in that tz) match the requested components.
-  - This handles DST transitions correctly and is fast for single conversions.
-*/
 
+    <script>
       const dateInput = document.getElementById("dateInput");
       const timeInput = document.getElementById("timeInput");
       const tzInput = document.getElementById("tzInput");
       const resultDiv = document.getElementById("result");
 
-      // defaults: date = today, time = now (local)
-      (function setDefaults() {
-        const now = new Date();
-        const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-        dateInput.value = local.toISOString().slice(0, 10); // YYYY-MM-DD
-        timeInput.value = local.toISOString().slice(11, 16); // HH:MM
+      // Fixed timezone offsets (minutes)
+      const tzOffsets = {
+        UTC: 0,
+        "Asia/Kolkata": 330,
+        "America/Los_Angeles": -480,
+        "America/Chicago": -360,
+        "Asia/Singapore": 480,
+      };
+
+      // ✅ Default to current UTC date & UTC time
+      (function setUTCDefaults() {
+        const nowUTC = new Date(Date.now());
+
+        const iso = nowUTC.toISOString(); // already UTC
+        dateInput.value = iso.slice(0, 10); // YYYY-MM-DD
+        timeInput.value = iso.slice(11, 16); // HH:MM
       })();
-
-      /* Helper: format a given epoch (ms) into parts according to tz,
-   returning numeric object {Y, M, D, h, m, s} */
-      function partsForEpoch(epochMs, tz) {
-        const dtf = new Intl.DateTimeFormat("en-US", {
-          timeZone: tz,
-          hour12: false,
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        });
-        const parts = dtf.formatToParts(new Date(epochMs));
-        const obj = {};
-        for (const p of parts) {
-          if (p.type === "year") obj.Y = Number(p.value);
-          if (p.type === "month") obj.M = Number(p.value);
-          if (p.type === "day") obj.D = Number(p.value);
-          if (p.type === "hour") obj.h = Number(p.value);
-          if (p.type === "minute") obj.m = Number(p.value);
-          if (p.type === "second") obj.s = Number(p.value);
-        }
-        return obj;
-      }
-
-      /* Compare two part-objects (only Y,M,D,h,m) */
-      function compareParts(a, b) {
-        if (a.Y !== b.Y) return a.Y - b.Y;
-        if (a.M !== b.M) return a.M - b.M;
-        if (a.D !== b.D) return a.D - b.D;
-        if (a.h !== b.h) return a.h - b.h;
-        if (a.m !== b.m) return a.m - b.m;
-        return 0;
-      }
-
-      /* Find epoch (ms) for the given wall-clock in timezone tz.
-   Returns epoch ms or null if not found within window. */
-      function wallTimeToEpoch(Y, M, D, h, m, tz) {
-        // target object
-        const target = { Y: Y, M: M, D: D, h: h, m: m };
-
-        // naive center: treat the wall-clock as if it were UTC to get a center epoch
-        // (this is just an anchor for a small window - good heuristic)
-        const center = Date.UTC(Y, M - 1, D, h, m);
-
-        // search ±36 hours to cover DST jumps and edge cases
-        const windowMs = 36 * 3600 * 1000;
-        let low = center - windowMs;
-        let high = center + windowMs;
-
-        // Binary search for epoch such that formatted parts match target
-        // We'll run up to ~40 iterations (enough for ms precision) but will break early
-        let found = null;
-        for (let iter = 0; iter < 45 && low <= high; iter++) {
-          const mid = Math.floor((low + high) / 2);
-          const p = partsForEpoch(mid, tz);
-          const cmp = compareParts(p, target);
-          if (cmp === 0) {
-            // We found an epoch that matches the wall-clock to the minute.
-            found = mid;
-            // but there might be multiple ms that format to the same minute;
-            // move left to find the earliest matching ms (deterministic)
-            high = mid - 1;
-          } else if (cmp < 0) {
-            low = mid + 1;
-          } else {
-            high = mid - 1;
-          }
-        }
-
-        if (found !== null) {
-          // normalize to the start of that minute (zero seconds) for stability
-          // find epoch within [found, found+60000) that has seconds = 0 formatted
-          // we'll scan a small forward window (0..59999ms) for the first match that still maps to same YMDhm
-          const base = found;
-          for (let add = 0; add < 60000; add++) {
-            const candidate = base + add;
-            const p = partsForEpoch(candidate, tz);
-            if (p.Y === Y && p.M === M && p.D === D && p.h === h && p.m === m) {
-              return candidate;
-            }
-          }
-          // fallback
-          return found;
-        }
-
-        // not found (rare) — return null
-        return null;
-      }
-
-      function fmtInstant(epochMs, tz) {
-        return new Intl.DateTimeFormat("en-US", {
-          timeZone: tz,
-          year: "numeric",
-          month: "short",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-        }).format(new Date(epochMs));
-      }
 
       function convert() {
         const d = dateInput.value;
@@ -231,17 +123,27 @@
 
         const [Y, M, D] = d.split("-").map(Number);
         const [h, m] = t.split(":").map(Number);
+
         const srcTZ = tzInput.value;
 
-        // Compute the exact epoch (ms) for the wall-clock in srcTZ
-        const epoch = wallTimeToEpoch(Y, M, D, h, m, srcTZ);
-        if (epoch === null) {
-          resultDiv.innerHTML =
-            '<div class="muted">Could not resolve the specified time in that timezone. Try a nearby minute.</div>';
-          return;
+        // 1) Build a UTC timestamp from YYYY-MM-DD HH:MM
+        const utcBase = Date.UTC(Y, M - 1, D, h, m);
+
+        // 2) Adjust to get the real UTC instant corresponding to the chosen srcTZ
+        const epochUTC = utcBase - tzOffsets[srcTZ] * 60000;
+
+        function fmt(tz) {
+          return new Intl.DateTimeFormat("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+            timeZone: tz,
+          }).format(new Date(epochUTC));
         }
 
-        // Display source and conversions
         const zones = {
           UTC: "UTC",
           IST: "Asia/Kolkata",
@@ -250,28 +152,22 @@
           SGT: "Asia/Singapore",
         };
 
-        let html = `<div><strong>Source (${srcTZ}):</strong><br>${fmtInstant(
-          epoch,
+        let html = `<div><strong>Source (${srcTZ}):</strong><br>${fmt(
           srcTZ
         )}<br/><br/>`;
 
         for (const [label, tz] of Object.entries(zones)) {
-          html += `<div><strong>${label}</strong>: ${fmtInstant(
-            epoch,
-            tz
-          )}</div>`;
+          html += `<div><strong>${label}</strong>: ${fmt(tz)}</div>`;
         }
-        html += `</div>`;
 
+        html += `</div>`;
         resultDiv.innerHTML = html;
       }
 
-      // event listeners
       dateInput.addEventListener("input", convert);
       timeInput.addEventListener("input", convert);
       tzInput.addEventListener("input", convert);
 
-      // initial render
       convert();
     </script>
   </body>
